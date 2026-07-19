@@ -244,3 +244,131 @@ class PPOOptimizer:
         self.optimizer.step()
 
         return total_loss.item()
+
+import os
+import asyncio
+import torch
+import logging
+from typing import List
+from lean_project.ai_agent.main import LeanProverEnv, LeanActorCritic, PPOOptimizer
+
+# ==========================================
+# 4/4: Checkpointing, Orchestration & Inference Pipeline
+# ==========================================
+
+class AIAgentOrchestrator:
+    """
+    The central runtime control tower for the AI Agent. Manages dual execution 
+    modes: iterative PPO training loops and deterministic production inference.
+    """
+    def __init__(self, checkpoint_path: str = "lean_project/ai_agent/checkpoints/best_prover.pt"):
+        self.checkpoint_path = checkpoint_path
+        self.logger = logging.getLogger("AIAgentProver")
+        
+        # Ensure checkpoint subdirectory existence
+        os.makedirs(os.path.dirname(self.checkpoint_path), exist_ok=True)
+        
+        # Initialize Core Deep Neural Subsystems
+        self.ac_network = LeanActorCritic()
+        self.optimizer_engine = PPOOptimizer(model=self.ac_network)
+
+    def save_checkpoint(self, score: float) -> None:
+        """Serializes current structural weights to disk when cross-validation score improves."""
+        torch.save({
+            "model_state_dict": self.ac_network.state_dict(),
+            "optimizer_state_dict": self.optimizer_engine.optimizer.state_dict(),
+            "score": score
+        }, self.checkpoint_path)
+        self.logger.info(f"Checkpoint fortified successfully with score: {score:.2f} -> Path: {self.checkpoint_path}")
+
+    def load_checkpoint(self) -> bool:
+        """Loads localized neural network parameters if a valid snapshot exists."""
+        if os.path.exists(self.checkpoint_path):
+            checkpoint = torch.load(self.checkpoint_path, map_location=torch.device("cpu"))
+            self.ac_network.load_state_dict(checkpoint["model_state_dict"])
+            self.optimizer_engine.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            self.logger.info(f"Pre-trained weights deployed cleanly. Previous verified score: {checkpoint['score']:.2f}")
+            return True
+        self.logger.warning("No baseline checkpoint detected. Operating on raw randomized initialization.")
+        return False
+
+    async def train_regime(self, target_theorem: str, total_episodes: int = 50) -> None:
+        """Executes a full multi-episode PPO trajectory generation cycle over the Lean environment."""
+        self.logger.info(f"Initiating autonomous training regime for target theorem: {target_theorem}")
+        env = LeanProverEnv(target_theorem=target_theorem)
+        best_reward = -float("inf")
+
+        for episode in range(1, total_episodes + 1):
+            state = await env.reset()
+            states, actions, log_probs, rewards = [], [], [], []
+            done = False
+            episode_reward = 0.0
+
+            while not done:
+                # Select tactical action using current stochastic policy distributions
+                action, log_prob, _ = self.ac_network.select_action(state)
+                
+                # Progress the Lean environment state via async IPC pipeline execution
+                next_state, reward, done, _ = await env.step(action)
+                
+                # Store trajectory steps for retrospective optimization phase
+                states.append(state)
+                actions.append(action)
+                log_probs.append(log_prob)
+                rewards.append(reward)
+                
+                state = next_state
+                episode_reward += reward
+
+            # Update weights using the gathered proof exploration trajectories
+            loss = self.optimizer_engine.update_policy(
+                states=states, actions=actions, old_log_probs=log_probs,
+                rewards=rewards, next_state=state, done=done
+            )
+            
+            self.logger.info(f"Episode [{episode}/{total_episodes}] Completed. Accum-Reward: {episode_reward:.2f} | PPO Loss: {loss:.4f}")
+
+            # Checkpoint guarding criteria evaluation
+            if episode_reward > best_reward:
+                best_reward = episode_reward
+                self.save_checkpoint(best_reward)
+
+    async def autonomous_inference_prove(self, new_theorem: str) -> List[str]:
+        """
+        Production Inference Mode: Deterministically drives the Lean 4 compiler 
+        to solve an unseen proof without taking gradient steps.
+        """
+        self.logger.info(f"Inference Mode Active: Attempting deterministic verification for: {new_theorem}")
+        self.ac_network.eval() # Freeze dropout/batchnorm and activate deterministic execution
+        env = LeanProverEnv(target_theorem=new_theorem)
+        state = await env.reset()
+        applied_tactics = []
+        done = False
+
+        with torch.no_grad(): # Disable memory-intensive tracking graphs
+            while not done:
+                action_probs, _ = self.ac_network(state)
+                # Select the highest-probability action greedily (Exploitation Only)
+                action = torch.argmax(action_probs, dim=-1).item()
+                tactic_name = env.tactic_pool[action]
+                applied_tactics.append(tactic_name)
+                
+                state, _, done, info = await env.step(action)
+                
+                if "goals accomplished" in state.lower():
+                    self.logger.info(f"Proof Generation Succeeded! Verification Pipeline fully resolved.")
+                    return applied_tactics
+                
+        self.logger.error("Inference Limit Reached: Tactic chain failed to close the sorry target.")
+        return applied_tactics
+
+# Entrypoint Execution Block for the Orchestration Subsystem
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    orchestrator = AIAgentOrchestrator()
+    
+    # Target problem statement extracted from our TargetTheorems.lean architecture
+    target_problem = "∀ (R M N : Type) [CommRing R] [AddCommGroup M] [Module R M] [AddCommGroup N] [Module R N] (f : M →ₗ[R] N), IsCryptographicallyInjective f → LinearMap.ker f = ⊥"
+    
+    # Launching the asynchronous training event horizon
+    asyncio.run(orchestrator.train_regime(target_theorem=target_problem, total_episodes=5))
