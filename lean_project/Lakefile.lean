@@ -122,3 +122,56 @@ lean_exe «lean_project_cli» where
   srcDir := "src/cli"
   -- Enforce total memory safety and static linking for the output binary
   supportInterpreter := true
+
+import Lake
+open Lake DSL
+
+/-!
+  # 1/5: Advanced Project Metadata & Core Compiler Configuration
+-/
+package «lean_project» where
+  srcDir := "src"
+  moreLeanArgs := #[
+    "-DwarningAsError=true",
+    "-DautoImplicit=false",
+    /- 
+      # 4/5: Enterprise-Grade Linters & Strict Quality Enforcement
+      Injecting strict static analysis rules directly into the global compiler flags.
+    -/
+    "-Dlinter.unusedVariables=true",       -- Rejects code with dead or unused variables
+    "-Dlinter.missingDocs=true",           -- Forces 100% documentation coverage on all public definitions
+    "-Dlinter.unusedRCases=true",          -- Catches redundant pattern matching structures in proofs
+    "-Dlinter.deprecated=true",            -- Bans the use of deprecated or outdated library functions
+    "-Dlinter.constructorNameAsType=true"  -- Prevents ambiguous naming collisions in inductive types
+  ]
+  moreLeancArgs := #[
+    "-O3",
+    "-march=native",
+    "-flto"
+  ]
+  moreLinkArgs := #[
+    "-flto"
+  ]
+
+/-!
+  # 2/5: Enterprise Dependency Management & Toolchain Alignment
+-/
+require mathlib from git
+  "https://github.com/leanprover-community/mathlib4.git" @ "main"
+require aesop from git
+  "https://github.com/leanprover-community/aesop.git" @ "main"
+require loogle from git
+  "https://github.com/leanprover-community/loogle.git" @ "main"
+
+/-!
+  # 3/5: Modular Multi-Target Architecture & Component Isolation
+-/
+@[default_target]
+lean_lib «LeanProjectCore» where
+  srcDir := "src/core"
+  moreLeanArgs := #["-DmaxHeartbeats=500000"] 
+
+lean_exe «lean_project_cli» where
+  root := `Main
+  srcDir := "src/cli"
+  supportInterpreter := true
