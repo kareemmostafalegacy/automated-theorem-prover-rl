@@ -66,3 +66,59 @@ require aesop from git
 -- High-performance pattern-based search engine tool for theorem discovery
 require loogle from git
   "https://github.com/leanprover-community/loogle.git" @ "main"
+
+import Lake
+open Lake DSL
+
+/-!
+  # 1/5: Advanced Project Metadata & Core Compiler Configuration
+-/
+package «lean_project» where
+  srcDir := "src"
+  moreLeanArgs := #[
+    "-DwarningAsError=true",
+    "-DautoImplicit=false"
+  ]
+  moreLeancArgs := #[
+    "-O3",
+    "-march=native",
+    "-flto"
+  ]
+  moreLinkArgs := #[
+    "-flto"
+  ]
+
+/-!
+  # 2/5: Enterprise Dependency Management & Toolchain Alignment
+-/
+require mathlib from git
+  "https://github.com/leanprover-community/mathlib4.git" @ "main"
+require aesop from git
+  "https://github.com/leanprover-community/aesop.git" @ "main"
+require loogle from git
+  "https://github.com/leanprover-community/loogle.git" @ "main"
+
+/-!
+  # 3/5: Modular Multi-Target Architecture & Component Isolation
+  Segmenting the project into a core verified library and high-performance executables.
+-/
+
+/--
+  The primary verified library target. 
+  Houses all mathematical proofs, foundational datatypes, and core logic.
+-/
+@[default_target]
+lean_lib «LeanProjectCore» where
+  srcDir := "src/core"
+  -- Target-specific overrides: allow slightly more memory usage during heavy verification
+  moreLeanArgs := #["-DmaxHeartbeats=500000"] 
+
+/--
+  High-performance Command Line Interface (CLI) executable target.
+  Compiled into a native binary for real-world execution.
+-/
+lean_exe «lean_project_cli» where
+  root := `Main
+  srcDir := "src/cli"
+  -- Enforce total memory safety and static linking for the output binary
+  supportInterpreter := true
