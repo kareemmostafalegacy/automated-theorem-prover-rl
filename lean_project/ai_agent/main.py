@@ -150,3 +150,97 @@ class LeanActorCritic(nn.Module):
         action = dist.sample()
         
         return action.item(), dist.log_prob(action), state_value
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Categorical
+from typing import List, Tuple
+
+# ==========================================
+# 3/4: PPO Clip Loss & Optimization Engine
+# ==========================================
+
+class PPOOptimizer:
+    """
+    Implements Proximal Policy Optimization update loops with clipped objective functions
+    to guarantee steady monotonic policy improvements over structural code environments.
+    """
+    def __init__(self, model: nn.Module, lr: float = 3e-4, gamma: float = 0.99, eps_clip: float = 0.2, c2_entropy: float = 0.01):
+        self.policy = model
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+        self.gamma = gamma
+        self.eps_clip = eps_clip
+        self.c2_entropy = c2_entropy
+        self.mse_loss = nn.MSELoss()
+
+    def update_policy(self, states: List[str], actions: List[int], old_log_probs: List[torch.Tensor], rewards: List[float], next_state: str, done: bool) -> float:
+        """
+        Executes a trajectory-based backward mathematical optimization pass.
+        Computes the Clipped Surrogate Objective Loss and returns the scalar cost.
+        """
+        # Convert raw trajectories to evaluation-ready tensor layouts
+        actions_tensor = torch.tensor(actions, dtype=torch.long)
+        old_log_probs_tensor = torch.stack(old_log_probs).detach()
+        
+        # 1. Compute Returns-To-Go (Monte Carlo cumulative reward computation)
+        discounted_rewards = []
+        discounted_sum = 0.0
+        if not done:
+            _, _, next_val = self.policy.select_action(next_state)
+            discounted_sum = next_val.item()
+            
+        for r in reversed(rewards):
+            discounted_sum = r + self.gamma * discounted_sum
+            discounted_rewards.insert(0, discounted_sum)
+            
+        returns = torch.tensor(discounted_rewards, dtype=torch.float)
+
+        # 2. Re-evaluate action probabilities and state values on the current graph
+        current_log_probs = []
+        state_values = []
+        entropy_list = []
+        
+        for state, action in zip(states, actions):
+            action_probs, val = self.policy(state)
+            dist = Categorical(action_probs)
+            current_log_probs.append(dist.log_prob(torch.tensor(action)))
+            state_values.append(val.squeeze(0))
+            entropy_list.append(dist.entropy())
+            
+        current_log_probs_tensor = torch.stack(current_log_probs)
+        state_values_tensor = torch.stack(state_values).squeeze(-1)
+        entropy_tensor = torch.stack(entropy_list)
+
+        # 3. Calculate Advantages: A(s,a) = Q(s,a) - V(s)
+        advantages = returns - state_values_tensor.detach()
+        # Normalize advantages to stabilize policy updates across wide reward variations
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # 4. Core PPO Mathematical Clipping Objective
+        # r_t(θ) = π_θ(a|s) / π_old(a|s)
+        ratios = torch.exp(current_log_probs_tensor - old_log_probs_tensor)
+        
+        surr1 = ratios * advantages
+        surr2 = torch.clamp(ratios, 1.0 - self.eps_clip, 1.0 + self.eps_clip) * advantages
+        
+        # Actor Policy Loss (Negative because we are performing gradient ascent for optimization)
+        actor_loss = -torch.min(surr1, surr2).mean()
+        
+        # Critic Value Loss (Mean Squared Error over target returns)
+        critic_loss = self.mse_loss(state_values_tensor, returns)
+        
+        # Entropy bonus to aggressively encourage early exploration of hidden tactics
+        entropy_loss = -entropy_tensor.mean()
+
+        # Total combined PPO composite loss
+        total_loss = actor_loss + 0.5 * critic_loss + self.c2_entropy * entropy_loss
+
+        # 5. Backward Pass and Gradient Clipping
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        # Clip global gradient norms to prevent numeric explosion in deep recurrent branches
+        nn.utils.clip_grad_norm_(self.policy.parameters(), max_norm=0.5)
+        self.optimizer.step()
+
+        return total_loss.item()
