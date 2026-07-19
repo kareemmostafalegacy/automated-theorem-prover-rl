@@ -67,3 +67,86 @@ class LeanProverEnv:
             await self.ipc_manager.terminate_session()
 
         return compiler_state, reward, is_done, info
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Categorical
+from typing import Tuple
+
+# ==========================================
+# 2/4: Actor-Critic Neural Network Architecture (PyTorch)
+# ==========================================
+
+class LeanActorCritic(nn.Module):
+    """
+    Deep Neural Network utilizing a joint embedding backbone with decoupled 
+    Actor (Policy) and Critic (Value) projection heads for proof search optimization.
+    """
+    def __init__(self, vocab_size: int = 5000, embedding_dim: int = 128, hidden_dim: int = 256, action_dim: int = 6):
+        super(LeanActorCritic, self).__init__()
+        
+        # 1. Text Representation Backbone (Processes Lean compiler output text)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
+        
+        # 2. Shared Dense Representation Layer
+        self.shared_dense = nn.Linear(hidden_dim, hidden_dim)
+        
+        # 3. Actor Head (Policy Network - Output probabilities over tactics)
+        self.actor_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, action_dim)
+        )
+        
+        # 4. Critic Head (Value Network - Evaluates how close the state is to 'goals accomplished')
+        self.critic_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
+        )
+
+    def _tokenize_and_pad(self, raw_text: str, max_len: int = 64) -> torch.Tensor:
+        """Helper to naively tokenize, numericalize, and pad raw compiler text into tensors."""
+        # Custom numerical translation layer mapping text characters/words to indices
+        tokens = [ord(char) % 4999 + 1 for char in raw_text] # Vocabulary hashing gate
+        if len(tokens) < max_len:
+            tokens += [0] * (max_len - len(tokens))
+        else:
+            tokens = tokens[:max_len]
+        return torch.tensor(tokens, dtype=torch.long).unsqueeze(0) # Dimensions: [1, max_len]
+
+    def forward(self, state_text: str) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Executes a forward mathematical pass. 
+        Returns: Action Probabilities (Tensor) and State Value Estimation (Tensor).
+        """
+        # Convert state text to device-compatible long tensor
+        state_tensor = self._tokenize_and_pad(state_text)
+        
+        # Feature extraction via Embedding and LSTM recurrent architecture
+        embedded = self.embedding(state_tensor)
+        lstm_out, (hidden, _) = self.lstm(embedded)
+        
+        # Compress temporal sequence representation using the final hidden state
+        features = F.relu(self.shared_dense(hidden[-1])) # Dimensions: [1, hidden_dim]
+        
+        # Compute policy logits and transform via Softmax into exact probability distribution
+        policy_logits = self.actor_head(features)
+        action_probs = F.softmax(policy_logits, dim=-1)
+        
+        # Compute scalar value projection
+        state_value = self.critic_head(features)
+        
+        return action_probs, state_value
+
+    def select_action(self, state_text: str) -> Tuple[int, torch.Tensor, torch.Tensor]:
+        """Samples an action index based on policy probabilities and tracks log probabilities."""
+        action_probs, state_value = self.forward(state_text)
+        
+        # Construct categorical distribution over the action workspace
+        dist = Categorical(action_probs)
+        action = dist.sample()
+        
+        return action.item(), dist.log_prob(action), state_value
