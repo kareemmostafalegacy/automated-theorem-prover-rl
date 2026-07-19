@@ -95,3 +95,59 @@ class RuntimeEnvironment:
 # Initialize execution of environment verification gates safely
 # Client runtimes can await this directly before triggering agent inference loops
 asyncio.ensure_future(RuntimeEnvironment.verify_infrastructure())
+
+import os
+import sys
+import asyncio
+import logging
+import time
+from typing import List, Dict, Any
+
+# [الميزات السابقة 1 و 2 معرفة هنا داخلياً في جذر الملف]
+
+# ==========================================
+# 3/4: Enterprise Logging & Observability Framework
+# ==========================================
+
+class AgentObservability:
+    """Handles high-precision diagnostic telemetry and performance isolation for the AI package."""
+    
+    @staticmethod
+    def setup_package_logger() -> logging.Logger:
+        """Configures a isolated structured logger for the automated prover ecosystem."""
+        logger = logging.getLogger("AIAgentProver")
+        logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+        
+        # Prevent log leakage to parent loggers if already configured globally
+        logger.propagate = False
+        
+        if not logger.handlers:
+            # High-visibility console stream formatter with microseconds resolution
+            console_handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter(
+                "[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] -> %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            )
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
+            
+        return logger
+
+    @staticmethod
+    def telemetry_timer(func_name: str):
+        """Context-based helper to calculate latency intervals for dynamic model inference."""
+        class TimerContext:
+            def __enter__(self):
+                self.start = time.perf_counter()
+                return self
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                end = time.perf_counter()
+                elapsed = (end - self.start) * 1000
+                logging.getLogger("AIAgentProver").debug(
+                    f"Execution Block [{func_name}] completed in {elapsed:.2f}ms"
+                )
+        return TimerContext()
+
+# Initialize the telemetry module at root execution level
+logger = AgentObservability.setup_package_logger()
+logger.info(f"AI Agent Ecosystem Telemetry initialized successfully [v{__version__}].")
