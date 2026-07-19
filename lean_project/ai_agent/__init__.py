@@ -151,3 +151,77 @@ class AgentObservability:
 # Initialize the telemetry module at root execution level
 logger = AgentObservability.setup_package_logger()
 logger.info(f"AI Agent Ecosystem Telemetry initialized successfully [v{__version__}].")
+
+import os
+import sys
+import asyncio
+import logging
+import time
+from typing import List, Dict, Any, Optional
+
+# [تم دمج الميزات السابقة 1 و 2 و 3 داخلياً هنا]
+
+# ==========================================
+# 4/4: Inter-Process Communication (IPC) Subsystem
+# ==========================================
+
+class LeanCompilerProcessManager:
+    """
+    Manages low-level, non-blocking asynchronous streaming channels 
+    directly with the Lean 4 compiler kernel.
+    """
+    
+    def __init__(self, target_project_path: str = "."):
+        self.project_path = target_project_path
+        self._process: Optional[asyncio.subprocess.Process] = None
+        self._logger = logging.getLogger("AIAgentProver")
+
+    async def spawn_interactive_session(self) -> None:
+        """
+        Spawns an active background Lean 4 REPL or interactive process 
+        with multiplexed standard input/output streams.
+        """
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                "lake", "repl",
+                cwd=self.project_path,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            self._logger.info(f"Lean 4 background compiler pipeline established safely at PID: {self._process.pid}")
+        except Exception as error:
+            self._logger.critical(f"IPC Breach: Failed to hook into Lake REPL interface: {error}")
+            raise RuntimeError("Backend Linkage Failed: AI cannot communicate with Lean 4.") from error
+
+    async def send_tactic_and_await_state(self, rational_payload: str) -> str:
+        """
+        Pipes an automated AI-generated tactic into the Lean kernel 
+        and captures the state response stream asynchronously.
+        """
+        if not self._process or self._process.stdin is None or self._process.stdout is None:
+            raise IOError("State Error: Subprocess pipeline is dead or uninitialized.")
+        
+        # Inject the tactic raw string with newline truncation
+        payload_bytes = f"{rational_payload}\n".encode("utf-8")
+        self._process.stdin.write(payload_bytes)
+        await self._process.stdin.drain()
+        
+        # Non-blocking read of the immediate response buffer from the compiler kernel
+        response_bytes = await self._process.stdout.readline()
+        return response_bytes.decode("utf-8").strip()
+
+    async def terminate_session(self) -> None:
+        """Gracefully tears down the process connection to prevent dangling background kernels."""
+        if self._process:
+            self._logger.debug("Closing communication channels and killing Lean subprocess...")
+            try:
+                self._process.terminate()
+                await self._process.wait()
+                self._logger.info("Lean 4 compiler session reaped and destroyed cleanly.")
+            except Exception as e:
+                self._logger.warning(f"Forced cleanup initiated due to standard termination failure: {e}")
+                self._process.kill()
+
+# Exporting the IPC manager directly to the public package interface boundaries
+__all__.append("LeanCompilerProcessManager")
